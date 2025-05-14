@@ -1,0 +1,143 @@
+import ccxt
+import pandas as pd
+
+try:
+    exchange = ccxt.binance()
+    symbol = 'BTC/USDT'
+    timeframe = '1h'
+    limit = 1000
+
+    ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+    df = df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
+    df.to_csv('bitcoin_1h.csv', index=False)
+    print("✅ CSV 저장 완료")
+
+except Exception as e:
+    print("❌ 에러 발생:", e)
+!pip install ta
+"""
+📌 기술적 지표 컬럼 단위 기준 정리
+
+- returns (%)         : 수익률, 전 시간 대비 변화율 (%)
+- sma_20 (USD)        : 20시간 단순 이동 평균 (달러)
+- ema_20 (USD)        : 20시간 지수 이동 평균 (달러)
+- volatility_20 (σ%)  : 20시간 수익률의 표준편차 (%, σ 단위)
+- rsi (0~100)         : 상대강도지수 (Relative Strength Index)
+- bb_bbm (USD)        : 볼린저 밴드 중앙선 (20기간 평균, 달러)
+- bb_bbh (USD)        : 볼린저 밴드 상단 (20기간 평균 + 2σ)
+- bb_bbl (USD)        : 볼린저 밴드 하단 (20기간 평균 - 2σ)
+"""
+
+import pandas as pd
+import ta
+
+# 데이터 불러오기 및 시간 인덱스 설정
+df = pd.read_csv('bitcoin_1h.csv', parse_dates=['timestamp'])
+df = df.set_index('timestamp')
+
+# 기술적 지표 계산 + 컬럼명에 단위 추가
+df['returns (%)'] = df['close'].pct_change() * 100  # 퍼센트로 환산
+df['sma_20 (USD)'] = df['close'].rolling(window=20).mean()
+df['ema_20 (USD)'] = df['close'].ewm(span=20, adjust=False).mean()
+df['volatility_20 (σ%)'] = df['returns (%)'].rolling(window=20).std()  # 퍼센트 기준 표준편차
+df['rsi (0~100)'] = ta.momentum.RSIIndicator(close=df['close'], window=14).rsi()
+
+# Bollinger Bands (20기간, ±2σ)
+bb = ta.volatility.BollingerBands(close=df['close'], window=20, window_dev=2)
+df['bb_bbm (USD)'] = bb.bollinger_mavg()
+df['bb_bbh (USD)'] = bb.bollinger_hband()
+df['bb_bbl (USD)'] = bb.bollinger_lband()
+
+# 결과 확인
+df.tail()
+features = df[['returns (%)', 'sma_20 (USD)', 'volatility_20 (σ%)', 'rsi (0~100)']]
+features = features.dropna()  # 결측치 제거
+from sklearn.preprocessing import StandardScaler
+
+scaler = StandardScaler()
+scaled_features = scaler.fit_transform(features)
+from sklearn.cluster import KMeans
+
+k = 4  # 군집 개수: 3~6개가 일반적. 바꿔가며 테스트 가능
+kmeans = KMeans(n_clusters=k, random_state=42)
+cluster_labels = kmeans.fit_predict(scaled_features)
+df.loc[features.index, 'market_state'] = cluster_labels
+df['market_state'] = df['market_state'].fillna(-1).astype(int)  # 여기를 이렇게 수정
+
+import matplotlib.pyplot as plt
+
+plt.figure(figsize=(15,6))
+for cluster in df['market_state'].dropna().unique():
+    cluster_data = df[df['market_state'] == cluster]
+    plt.scatter(cluster_data.index, cluster_data['close'], label=f'Cluster {cluster}', s=10)
+
+plt.legend()
+plt.title("Bitcoin Price by Market Cluster (K-Means)")
+plt.ylabel("BTC Price (USD)")
+plt.show()
+
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, confusion_matrix
+import matplotlib.pyplot as plt
+
+# 1. 수익률 계산 및 **3단계 라벨 설정**
+def classify_return(x):
+    if x > 0.002:
+        return 1   # 상승
+    elif x < -0.003:
+        return -1  # 하락
+    else:
+        return 0   # 횡보
+
+df['future_return'] = (df['close'].shift(-1) - df['close']) / df['close']
+df['target'] = df['future_return'].apply(classify_return)
+
+# 2. 피처 설정 및 결측치 제거
+features = ['returns (%)', 'sma_20 (USD)', 'volatility_20 (σ%)', 'rsi (0~100)', 'market_state']
+df_model = df[features + ['target']].dropna()
+
+X = df_model[features]
+y = df_model['target']
+
+# 3. 학습/테스트 분할
+X_train, X_test, y_train, y_test = train_test_split(X, y, shuffle=False, test_size=0.2)
+
+# 4. RandomForest 학습
+model = RandomForestClassifier(random_state=42)
+model.fit(X_train, y_train)
+
+y_pred = model.predict(X_test)
+
+# 5. 성능 평가
+print(classification_report(y_test, y_pred))
+print(confusion_matrix(y_test, y_pred))
+
+# 6. 피처 중요도 시각화
+importances = model.feature_importances_
+plt.barh(X.columns, importances)
+plt.title("Feature Importance")
+plt.show()
+df['target'].value_counts(normalize=True)
+print(df['target'].value_counts())
+print(df['target'].value_counts(normalize=True).round(3))  
+pip install scikit-plot
+
+import scikitplot as skplt
+import matplotlib.pyplot as plt
+
+skplt.metrics.plot_confusion_matrix(y_test, y_pred, normalize=True)
+plt.title("Confusion Matrix (Normalized)")
+plt.show()
+from sklearn.metrics import classification_report
+
+report = classification_report(y_test, y_pred, output_dict=True)
+print("Macro F1-score:", round(report['macro avg']['f1-score'], 3))
+from sklearn.ensemble import RandomForestClassifier
+
+model = RandomForestClassifier(class_weight='balanced', random_state=42)
+model.fit(X_train, y_train)
+y_pred = model.predict(X_test)
